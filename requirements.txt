@@ -1,0 +1,4 @@
+requests>=2.31
+# YouTube extraction breaks often; 2026.08.19+ fixes the 403 on media URLs
+yt-dlp>=2026.8.19
+faster-whisper>=1.0

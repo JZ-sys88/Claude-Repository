@@ -1,0 +1,38 @@
+# --- secrets -----------------------------------------------------------
+.env
+.token_cache.json
+*.cookies
+cookies.txt
+
+# --- third-party content -------------------------------------------------
+# This repo is PUBLIC. Everything below is derived data about the streamer,
+# not code: verbatim transcripts of her speech, contact sheets with frames of
+# her face embedded as base64, and candidate lists quoting her. None of it
+# belongs in a public repo, and all of it regenerates from the VODs.
+transcript.json
+transcript.txt
+*_transcript.json
+*.live_chat.json*
+candidates.json
+*_candidates.json
+horror.json
+rachel.json
+review.html
+*_review.html
+packages/
+outbox/
+shorts/
+
+# --- rendered media ------------------------------------------------------
+*.mp4
+*.mkv
+*.m4a
+*.webm
+*.jpg
+*.png
+
+# --- python --------------------------------------------------------------
+__pycache__/
+*.pyc
+.venv/
+venv/
