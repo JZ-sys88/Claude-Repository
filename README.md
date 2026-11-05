@@ -104,6 +104,39 @@ human finds clip-worthy. That is why it is weighted to populate the review
 page rather than lead it, and why `review` exists at all. The tool proposes;
 you dispose.
 
+### That rank-37 number is a weaker benchmark than it looks
+
+Reading the transcript at the moments which *outranked* the clipped one shows
+they are not errors at all:
+
+| Rank | What she is saying |
+|---|---|
+| 2 | "oh I'm so dead I'm so dead I'm so dead" |
+| 3 | "I don't understand, I don't understand, I don't understand" |
+| 4 | "No, no, no, no, no, no!" |
+| 37 | *the clipped moment* |
+
+Several of those are arguably better highlights than the one a viewer happened
+to save. One clip from one viewer is an n=1 benchmark: it proves a moment is
+good, not that the others are bad. Do not tune hard against it.
+
+### Two experiments, one negative
+
+**Voice-band filtering: does not work.** Bandpassing to 300-3500 Hz before
+`ebur128`, to suppress game rumble, moved the clipped moment from 40/40 to
+37/40 -- noise -- for 67% more processing time, with the same five moments on
+top. The premise was wrong: the competing onsets are *already her voice*, not
+game audio, so there was nothing for the filter to remove. This also means
+separate OBS audio tracks would have bought far less than expected.
+
+**Repetition scoring: works.** Panic and delight both make her repeat herself,
+and a keyword list cannot anticipate which phrase gets repeated -- but the
+repeating itself is the signal. `speech.repetition()` finds the strongest
+repeated n-gram in a line and weights repeat count by phrase length, so a
+trebled three-word phrase outranks a doubled single word. Cross-tier agreement
+(the strongest ranking signal we have) rose from **6 to 10** moments on the
+same VOD.
+
 The strongest signal in practice is **agreement** — moments flagged by both
 onset and speech ranked top of the merged list, e.g. "What? What? Are you
 serious?" at 00:37:39.

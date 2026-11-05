@@ -383,11 +383,16 @@ EBUR = re.compile(r"\bt:\s*([\d.]+).*?\bM:\s*(-?(?:[\d.]+|inf))")
 def loudness_profile(src, voice_band=False, hp=300, lp=3500):
     """[(t, momentary_LUFS)] via ffmpeg's ebur128 filter.
 
-    voice_band bandpasses to roughly the vocal range first. She does not record
-    separate audio tracks, so game audio and her mic are permanently mixed and a
-    loud explosion reads like a scream. Most game rumble is below ~200 Hz while
-    vocal fundamentals and their lower harmonics sit above it, so cutting the
-    low end biases the loudness measurement toward her voice.
+    voice_band bandpasses to roughly the vocal range first, on the theory that
+    game rumble below ~200 Hz reads like a scream once mixed with her mic.
+
+    MEASURED: it does not help. A/B against the one human-clipped moment moved
+    it from rank 40/40 to 37/40 -- noise -- and the same five moments stayed on
+    top, merely reordered, at 67% more processing time. The reason is that the
+    competing onsets are *already her voice* ("I'm so dead I'm so dead I'm so
+    dead", "No, no, no, no, no!"), not game audio, so filtering to the vocal
+    range removes nothing that was competing. Left off by default; kept only so
+    the experiment is not repeated.
     """
     chain = "ebur128"
     if voice_band:

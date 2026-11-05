@@ -57,6 +57,38 @@ def transcribe(audio_path, model_size="base.en", device="cpu",
     return rows, info
 
 
+def repetition(text, max_gram=4):
+    """Strength of the strongest repeated phrase in a line.
+
+    Panic and delight both make her repeat herself -- the onset tier's
+    top-ranked moments were "I'm so dead I'm so dead I'm so dead", "I don't
+    understand" three times, and "No, no, no, no, no, no!". A fixed keyword
+    list cannot anticipate which phrase gets repeated, but the repeating
+    itself is the signal, so measure that directly.
+
+    Returns (strength, phrase, count); strength weights repeat count by
+    phrase length, so a trebled three-word phrase beats a doubled single word.
+    """
+    words = [w.strip(".,!?;:’'\"").lower() for w in text.split()]
+    words = [w for w in words if w]
+    n = len(words)
+    best = (0, "", 0)
+    for size in range(1, max_gram + 1):
+        if n < size * 2:
+            break
+        counts = {}
+        for i in range(n - size + 1):
+            g = tuple(words[i:i + size])
+            counts[g] = counts.get(g, 0) + 1
+        for g, c in counts.items():
+            if c < 2:
+                continue
+            strength = (c - 1) * size
+            if strength > best[0]:
+                best = (strength, " ".join(g), c)
+    return best
+
+
 def score_segment(text):
     """Heuristic reaction score for one line, plus which cues fired."""
     score, hits = 0.0, []
@@ -69,6 +101,12 @@ def score_segment(text):
     if caps:
         score += 0.8 * min(len(caps), 3)
         hits.append("CAPS")
+
+    strength, phrase, count = repetition(text)
+    if strength >= 2:
+        # capped: a long stuttering segment should not outscore everything
+        score += min(strength * 0.6, 4.0)
+        hits.append(f'x{count} "{phrase[:18]}"')
     return score, hits
 
 
