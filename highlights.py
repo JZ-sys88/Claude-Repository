@@ -66,6 +66,13 @@ CHAT_FLOOR = 0.05   # msg/sec below which density has nothing to work with
 
 def cmd_analyze(a):
     cands, stats = [], {}
+
+    if not a.skip_preflight and (a.audio or a.speech or a.onset):
+        if not media.preflight_report(media.preflight(a.vod_id)):
+            print("\naborting -- rerun with --skip-preflight to override",
+                  file=sys.stderr)
+            return 1
+
     length = chat.vod_length(a.vod_id)
 
     if not a.no_chat:
@@ -262,6 +269,14 @@ def cmd_package(a):
         print(f"  {s.id}  {mins:5.0f}m  {s.title}")
     if not picked:
         return 1
+
+    if not a.skip_preflight:
+        # Probe the first stream before committing to hours of work: a broken
+        # yt-dlp fails identically on every source, so one check covers the run.
+        if not media.preflight_report(media.preflight(picked[0])):
+            print("\naborting before the expensive part -- rerun with "
+                  "--skip-preflight to override", file=sys.stderr)
+            return 1
 
     work = pathlib.Path(a.workdir)
     per_vod = []
@@ -491,6 +506,8 @@ def main():
     a.add_argument("--audio-baseline", type=int, default=85, help="loudness percentile")
     a.add_argument("--audio-file", help="reuse an already-downloaded audio track")
     a.add_argument("--transcript", default="transcript.json")
+    a.add_argument("--skip-preflight", action="store_true",
+                   help="skip the yt-dlp media-fetch check")
     a.add_argument("--reuse-transcript", action="store_true",
                    help="load --transcript instead of re-transcribing")
     a.add_argument("--days", type=int, default=14, help="clip search window")
@@ -526,6 +543,8 @@ def main():
                     help="drop a clip if this fraction of its gameplay region "
                          "is black (0 disables)")
     pk.add_argument("--analyse-only", action="store_true")
+    pk.add_argument("--skip-preflight", action="store_true",
+                    help="skip the yt-dlp media-fetch check")
     pk.add_argument("--workdir", default="packages")
     pk.add_argument("-o", "--out", default="package.mp4")
     pk.set_defaults(func=cmd_package)

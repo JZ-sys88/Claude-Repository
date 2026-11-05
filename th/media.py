@@ -1,4 +1,5 @@
 """Download, thumbnail and render. Wraps yt-dlp + ffmpeg."""
+import datetime as dt
 import json
 import os
 import re
@@ -87,6 +88,118 @@ def download_section(target, start, duration, out_path, quality=None):
     if r.returncode != 0:
         raise RuntimeError(f"section download failed: {r.stderr[-400:]}")
     return _settle(out_path)
+
+
+# --- preflight -----------------------------------------------------------
+# She does not record locally, so YouTube/Twitch extraction is the only source
+# there will ever be -- a stale yt-dlp has twice 403'd every download and taken
+# the whole pipeline down. Prove a real fetch works before committing to an
+# hour-long analyse-and-render run.
+YTDLP_MIN = "2026.08.19"
+STALE_DAYS = 30
+
+
+def ytdlp_version():
+    r = _run(YTDLP + ["--version"])
+    return (r.stdout or "").strip().splitlines()[-1] if r.stdout else ""
+
+
+def _version_date(v):
+    try:
+        return dt.datetime.strptime(v[:10], "%Y.%m.%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def preflight(target, probe_seconds=2.0, quality=None):
+    """Check yt-dlp's version and prove it can still fetch media from `target`.
+
+    Returns a dict with ok/version/age_days/stale/probe. A version string alone
+    is not enough: both outages had a yt-dlp that ran fine and reported a
+    version, then returned 403 for every media URL. Only a real byte fetch
+    distinguishes the two.
+    """
+    v = ytdlp_version()
+    d = _version_date(v)
+    age = (dt.date.today() - d).days if d else None
+    info = {
+        "version": v,
+        "age_days": age,
+        "stale": bool(age is not None and age > STALE_DAYS),
+        "below_min": bool(d and _version_date(YTDLP_MIN) and d < _version_date(YTDLP_MIN)),
+    }
+
+    tmp = tempfile.mkdtemp(prefix="th_preflight_")
+    out = os.path.join(tmp, "probe.mp4")
+    try:
+        download_section(target, 0, probe_seconds, out, quality=quality)
+        got = os.path.getsize(out) if os.path.exists(out) else 0
+        info["probe_bytes"] = got
+        info["ok"] = got > 0
+        if not info["ok"]:
+            info["error"] = "probe produced an empty file"
+    except Exception as e:
+        info["ok"] = False
+        info["error"] = _first_error_line(str(e))
+        info["kind"], info["advice"] = _classify(str(e))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return info
+
+
+def _first_error_line(text):
+    """yt-dlp prefixes real failures with ERROR:, after unrelated warnings."""
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith("ERROR:"):
+            return line[:300]
+    return (text or "")[-200:].strip()
+
+
+# A missing VOD and a broken extractor both fail the probe, but the fixes are
+# opposite: one needs a different source, the other needs a yt-dlp update.
+# Telling the user to upgrade when the video is simply gone wastes their time.
+_PATTERNS = [
+    ("gone", ("does not exist", "video is unavailable", "has been removed",
+              "private video", "members-only", "video unavailable"),
+     "The video is gone, private or members-only -- not a yt-dlp problem. "
+     "If it was a Twitch id, retention has expired (7-60 days); use the "
+     "YouTube archive instead."),
+    ("blocked", ("403", "forbidden", "sign in to confirm", "bot"),
+     "Extraction is broken or rate-limited: pip install -U yt-dlp"),
+    ("format", ("requested format is not available", "no video formats"),
+     "Format resolution failed -- usually a stale yt-dlp or a missing JS "
+     "runtime: pip install -U yt-dlp, and ensure node is on PATH"),
+]
+
+
+def _classify(text):
+    low = (text or "").lower()
+    for kind, needles, advice in _PATTERNS:
+        if any(n in low for n in needles):
+            return kind, advice
+    return "unknown", "pip install -U yt-dlp, then retry"
+
+
+def preflight_report(info, stream=None):
+    """Print a human summary; return True if it is safe to continue."""
+    out = stream or sys.stdout
+    v, age = info.get("version", "?"), info.get("age_days")
+    agestr = f"{age}d old" if age is not None else "age unknown"
+    print(f"[preflight] yt-dlp {v} ({agestr})", file=out)
+    if info.get("below_min"):
+        print(f"  WARNING: below known-good {YTDLP_MIN}", file=out)
+    elif info.get("stale"):
+        print(f"  WARNING: older than {STALE_DAYS}d -- YouTube breaks often, "
+              f"consider: pip install -U yt-dlp", file=out)
+    if info.get("ok"):
+        print(f"  media fetch OK ({info.get('probe_bytes', 0)/1024:.0f} KB probe)",
+              file=out)
+        return True
+    print(f"  MEDIA FETCH FAILED [{info.get('kind', 'unknown')}]: "
+          f"{info.get('error', 'unknown')}", file=out)
+    print(f"  -> {info.get('advice', 'pip install -U yt-dlp')}", file=out)
+    return False
 
 
 def _settle(out_path):
@@ -267,9 +380,19 @@ def concat(parts, out_path):
 EBUR = re.compile(r"\bt:\s*([\d.]+).*?\bM:\s*(-?(?:[\d.]+|inf))")
 
 
-def loudness_profile(src):
-    """[(t, momentary_LUFS)] via ffmpeg's ebur128 filter."""
-    r = _run(["ffmpeg", "-nostats", "-i", src, "-filter_complex", "ebur128",
+def loudness_profile(src, voice_band=False, hp=300, lp=3500):
+    """[(t, momentary_LUFS)] via ffmpeg's ebur128 filter.
+
+    voice_band bandpasses to roughly the vocal range first. She does not record
+    separate audio tracks, so game audio and her mic are permanently mixed and a
+    loud explosion reads like a scream. Most game rumble is below ~200 Hz while
+    vocal fundamentals and their lower harmonics sit above it, so cutting the
+    low end biases the loudness measurement toward her voice.
+    """
+    chain = "ebur128"
+    if voice_band:
+        chain = f"highpass=f={hp},lowpass=f={lp},ebur128"
+    r = _run(["ffmpeg", "-nostats", "-i", src, "-filter_complex", chain,
               "-f", "null", "-"])
     out = []
     for line in (r.stderr or "").splitlines():
