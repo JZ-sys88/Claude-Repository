@@ -7,6 +7,7 @@
   python highlights.py render candidates.json [--top 15 | --pick 0,3,7]
 """
 import argparse
+import datetime as dt
 import json
 import os
 import pathlib
@@ -236,6 +237,115 @@ def analyse_source(src, workdir, top=40, model_size="base.en", speech_min=2.5,
             pass
     print(f"  {len(merged)} candidates -> {cand_p}")
     return merged, tr_p
+
+
+def cmd_watch(a):
+    """Detect newly archived streams and analyse them.
+
+    Built to be safe to run unattended on a schedule, which means two guards:
+    the first run only records a baseline (all 135 existing streams would
+    otherwise queue days of work), and --max-new caps how much one invocation
+    will take on so a week of missed streams cannot start an eight-hour job.
+    """
+    from th import source as srcmod, review as reviewmod
+
+    state_p = pathlib.Path(a.state)
+    state = {"seen": [], "updated": None}
+    if state_p.exists():
+        try:
+            state = json.loads(state_p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"state file unreadable ({e}); treating as first run",
+                  file=sys.stderr)
+    seen = set(state.get("seen") or [])
+    first_run = not state_p.exists() or not seen
+
+    streams = srcmod.channel_streams(a.channel, limit=a.scan)
+    if not streams:
+        print(f"no streams listed for @{a.channel} -- channel renamed, or "
+              f"extraction is broken", file=sys.stderr)
+        return 1
+    new = [s for s in streams if s.id not in seen]
+
+    print(f"@{a.channel}: {len(streams)} archived, {len(seen)} already seen, "
+          f"{len(new)} new")
+
+    def save_state(ids):
+        state_p.write_text(json.dumps(
+            {"seen": sorted(ids), "updated": dt.datetime.now().isoformat(timespec="seconds")},
+            indent=1), encoding="utf-8")
+
+    if first_run and not a.backfill:
+        if not a.dry_run:
+            save_state({s.id for s in streams})
+        print(f"baseline recorded ({len(streams)} streams marked seen); "
+              f"nothing analysed. Use --backfill N to process recent ones.")
+        return 0
+
+    todo = new[: a.max_new]
+    if a.backfill:
+        todo = streams[: a.backfill]
+    if not todo:
+        print("nothing to do")
+        return 0
+
+    print(f"\nwill process {len(todo)}:")
+    for s in todo:
+        print(f"  {s.id}  {(s.duration or 0)/60:5.0f}m  {s.title}")
+    if a.dry_run:
+        print("\n(--dry-run: stopping here, state unchanged)")
+        return 0
+
+    if not a.skip_preflight:
+        if not media.preflight_report(media.preflight(todo[0])):
+            print("\naborting before analysis; state unchanged", file=sys.stderr)
+            return 1
+
+    work = pathlib.Path(a.workdir)
+    produced = []
+    for s in todo:
+        if not s.duration or not s.date:
+            srcmod.fetch_meta(s)
+        print(f"\n=== {s.id} | {s.title} ===")
+        try:
+            cands, _tr = analyse_source(s, work, top=a.top,
+                                        model_size=a.model,
+                                        speech_min=a.speech_min)
+        except Exception as e:
+            print(f"  analysis failed: {e}", file=sys.stderr)
+            continue
+
+        sheet = None
+        if cands and not a.no_review:
+            top = cands[: a.thumbs]
+            thumbs = {}
+            if not a.no_thumbs:
+                tdir = pathlib.Path(tempfile.mkdtemp(prefix="th_wthumb_"))
+                for i, c in enumerate(top):
+                    p = str(tdir / f"{i:03d}.jpg")
+                    at = c["start"] + min(c["duration"] * 0.5, 12)
+                    try:
+                        if media.thumbnail_at(s, at, p):
+                            thumbs[i] = p
+                    except Exception:
+                        pass
+                print(f"  {len(thumbs)}/{len(top)} thumbnails")
+            sheet = str(work / s.key / "review.html")
+            reviewmod.build(top, sheet, thumbs=thumbs,
+                            title=f"{s.title} ({s.date or ''})")
+        produced.append((s, len(cands), sheet))
+        seen.add(s.id)
+        save_state(seen)          # persist per stream, so a crash loses one
+
+    print("\n--- summary ---")
+    for s, n, sheet in produced:
+        print(f"{s.id}  {n} candidates")
+        if sheet:
+            print(f"  review: {sheet}")
+    if not produced:
+        print("nothing completed")
+        return 1
+    return 0
 
 
 def cmd_package(a):
@@ -524,6 +634,25 @@ def main():
     r.add_argument("--no-thumbs", action="store_true")
     r.add_argument("-o", "--out", default="review.html")
     r.set_defaults(func=cmd_review)
+
+    w = sub.add_parser("watch", help="analyse newly archived streams")
+    w.add_argument("--channel", default="Untumbled", help="YouTube handle")
+    w.add_argument("--scan", type=int, default=200)
+    w.add_argument("--max-new", type=int, default=1,
+                   help="most streams to process in one run")
+    w.add_argument("--backfill", type=int, default=0,
+                   help="process the N most recent regardless of state")
+    w.add_argument("--state", default=".watch_state.json")
+    w.add_argument("--workdir", default="packages")
+    w.add_argument("--top", type=int, default=40)
+    w.add_argument("--thumbs", type=int, default=12, help="candidates on the sheet")
+    w.add_argument("--model", default="base.en")
+    w.add_argument("--speech-min", type=float, default=2.5)
+    w.add_argument("--no-review", action="store_true")
+    w.add_argument("--no-thumbs", action="store_true")
+    w.add_argument("--dry-run", action="store_true")
+    w.add_argument("--skip-preflight", action="store_true")
+    w.set_defaults(func=cmd_watch)
 
     pk = sub.add_parser("package", help="collate one game across many streams")
     pk.add_argument("--game", required=True, help="display name for the intro card")

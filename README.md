@@ -109,16 +109,19 @@ you dispose.
 Reading the transcript at the moments which *outranked* the clipped one shows
 they are not errors at all:
 
-| Rank | What she is saying |
+| Rank | What is happening |
 |---|---|
-| 2 | "oh I'm so dead I'm so dead I'm so dead" |
-| 3 | "I don't understand, I don't understand, I don't understand" |
-| 4 | "No, no, no, no, no, no!" |
+| 2 | a short phrase of dismay, repeated three times |
+| 3 | a three-word phrase, repeated three times |
+| 4 | a single word, repeated six times |
 | 37 | *the clipped moment* |
 
 Several of those are arguably better highlights than the one a viewer happened
 to save. One clip from one viewer is an n=1 benchmark: it proves a moment is
 good, not that the others are bad. Do not tune hard against it.
+
+(Quotes are paraphrased on purpose: this repo is public and her words are
+hers. Run the analysis locally if you need the literal lines.)
 
 ### Two experiments, one negative
 
@@ -136,6 +139,24 @@ repeated n-gram in a line and weights repeat count by phrase length, so a
 trebled three-word phrase outranks a doubled single word. Cross-tier agreement
 (the strongest ranking signal we have) rose from **6 to 10** moments on the
 same VOD.
+
+## Watching for new streams
+
+```bash
+python highlights.py watch --channel Untumbled          # analyse anything new
+python highlights.py watch --channel Untumbled --dry-run
+```
+
+`watch` lists the channel's archived streams, compares them against
+`.watch_state.json`, and analyses whatever is new -- then builds a review
+contact sheet for each so there is something to pick from.
+
+**First run records a baseline and analyses nothing.** All 135 existing streams
+would otherwise count as "new" and queue days of work. Use `--backfill N` to
+deliberately process the N most recent.
+
+`--max-new` (default 1) caps how many streams one invocation will take on, so a
+week of missed streams cannot start an eight-hour job unattended.
 
 The strongest signal in practice is **agreement** — moments flagged by both
 onset and speech ranked top of the merged list, e.g. "What? What? Are you

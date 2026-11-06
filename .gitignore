@@ -22,6 +22,7 @@ review.html
 packages/
 outbox/
 shorts/
+.watch_state.json
 
 # --- rendered media ------------------------------------------------------
 *.mp4

@@ -69,12 +69,27 @@ def merge(cands, window=45.0):
         # prefer the earliest start in the group so we don't clip into the payoff
         start = min(c["start"] for c in g)
         end = max(c["start"] + c["duration"] for c in g)
+        # Carry the speech quote across even when onset wins the scoring:
+        # on the review page the quote is what tells you what the moment IS,
+        # and an onset candidate's detail has nothing but a decibel figure.
+        detail = dict(best.get("detail") or {})
+        title = best.get("title", "")
+        if "quote" not in detail:
+            spoken = next((c for c in g
+                           if (c.get("detail") or {}).get("quote")), None)
+            if spoken:
+                detail["quote"] = spoken["detail"]["quote"]
+                if not title or title.startswith(("onset ", "audio ", "chat ")):
+                    title = spoken.get("title", title)
+
         merged.append({
             **best,
             "start": start,
             "duration": min(end - start, 90.0),
             "final_score": round(min(final, 1.5), 4),
             "sources": sorted(sources),
+            "detail": detail,
+            "title": title,
         })
     merged.sort(key=lambda c: c["final_score"], reverse=True)
     return merged
